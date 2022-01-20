@@ -22,8 +22,9 @@ functionalForms = [1];  % 1 - exponential, 2 - quadratic, 3 -  linear
 functionalForm_labels = {'exponential', 'quadratic', 'linear'};
 control_cost_values = linspace(control_cost_range(1), control_cost_range(2), numSubj);
 
-controlEfficacy_condiitons = [0.2:0.2:2.0];
-taskAutomaticity_conditions = repmat(-7.5, size(controlEfficacy_condiitons, 1), size(controlEfficacy_condiitons, 2));
+controlEfficacy_conditions = 10:20;
+taskAutomaticity_conditions = repmat(-7.5, size(controlEfficacy_conditions, 1), size(controlEfficacy_conditions, 2));
+experiment_conditions = 1:length(controlEfficacy_conditions);
 
 %%% DEFINE DEFAULT AGENT
 
@@ -51,15 +52,12 @@ agent.valueFnc = @(u) default_rewardSensitivity * u + default_accuracyBias;
 % set up reward manipulations
 experiment.rewards = 0:1:10;
 
-%% Simulation Loop
+% Simulation Loop
 
 overwrite = 1;
 
 % generate log file name
-logfileName = ['EVC_Model_Data_' ...
-                        num2str(control_cost_range(1)*100) '_' num2str(control_cost_range(end)*100) '_'...
-                        num2str(numReps) '_' ...
-                        num2str(numSubj)];
+logfileName = ['Control_Efficacy_Simulation_'];
                     
 filePath = [logFolderName '/' logfileName '.mat'];
 
@@ -68,14 +66,22 @@ if exist(filePath, 'file') == 2  && ~overwrite   % if log file exists load it
 else                                         % if log file doesn't exist, generate it 
 
     % for each standard_deviation condition
-    for ff_cond_idx = 1:length(functionalForms) 
+    for exp_condition = 1:length(experiment_conditions) 
 
-        functionalForm = functionalForms(ff_cond_idx);
+        functionalForm = functionalForms(1);
+        
+        % set current experiment condition
+        controlEfficacy = controlEfficacy_conditions(exp_condition);
+        taskAutomaticity = taskAutomaticity_conditions(exp_condition);
+        agent.outcomeProbabilityFnc = @(u) 1./(1+exp(-controlEfficacy*u - taskAutomaticity));
+        
+        experiment_log{exp_condition}.outcome_probabilities = nan(numSubj, length(experiment.rewards));
+        experiment_log{exp_condition}.controlEfficacy = controlEfficacy;
+        experiment_log{exp_condition}.taskAutomaticity = taskAutomaticity;
+        experiment_log{exp_condition}.rewards = experiment.rewards;
 
         % for each repetition
         for rep = 1:numReps
-            
-            outcomeProbabilities_Log = nan(numSubj, length(experiment.rewards));
 
             % for each subject
             for subj = 1:numSubj
@@ -112,12 +118,12 @@ else                                         % if log file doesn't exist, genera
 
                 % submit EVC agent to experiment (generate outcome probabilities from reward manipulations)
                 [outcomeProbabilities] = runEVCAgent(controlSignalSpace, outcomeProbabilityFnc, valueFnc, costFnc, rewards);
-                outcomeProbabilities_Log(subj, :) = outcomeProbabilities;
+                experiment_log{exp_condition}.outcome_probabilities(subj, :) = outcomeProbabilities;
             end
 
         end
 
-        disp(['progress: ' num2str(ff_cond_idx) '/' num2str(length(functionalForms) )]);
+        disp(['progress: ' num2str(exp_condition) '/' num2str(length(experiment_conditions) )]);
 
     end
     
@@ -127,12 +133,36 @@ end
 
 % Write CSV File
     
-accuracies = mean(outcomeProbabilities_Log)';
-data = [accuracies (1-accuracies) experiment.rewards'];
-T = array2table(data);
-T.Properties.VariableNames(1:3) = {'a_correct','a_incorrect','reward'};
-csv_filename = [logFolderName '/' logfileName '.csv'];
-writetable(T,csv_filename);
+for exp_condition = 1:length(experiment_conditions)
+    
+    accuracies = mean(experiment_log{exp_condition}.outcome_probabilities);
+    rewards = experiment_log{exp_condition}.rewards;
+    controlEfficacy = experiment_log{exp_condition}.controlEfficacy;
+    taskAutomaticity = experiment_log{exp_condition}.taskAutomaticity;
+    
+    n_rewards = length(rewards);
+    
+    data = [accuracies' (1-accuracies)' experiment.rewards' repmat(controlEfficacy, n_rewards, 1) repmat(taskAutomaticity, n_rewards, 1)];
+    T = array2table(data);
+    T.Properties.VariableNames(1:5) = {'a_correct','a_incorrect','reward','control_efficacy', 'task_automaticity'};
+    csv_filename = [logFolderName '/' logfileName  '_' num2str(exp_condition) '.csv'];
+    writetable(T,csv_filename);
+end
 
-plot(accuracies, experiment.rewards);
+% PLOT
+
+cmap = jet(length(experiment_conditions));
+
+figure(1);
+for exp_condition = 1:length(experiment_conditions)
+    
+    accuracies = mean(experiment_log{exp_condition}.outcome_probabilities);
+    rewards = experiment_log{exp_condition}.rewards;
+    
+    plot(rewards, accuracies, 'Color', cmap(exp_condition, :)); hold on;
+    
+    
+end
+hold off;
+
 
