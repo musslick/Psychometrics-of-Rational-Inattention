@@ -1,0 +1,216 @@
+---
+title: "CogSci2022"
+author: "Ham Huang"
+date: "11/11/2021, @Philly"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: united
+    number_sections: true
+    highlight: tango
+  pdf_document: default
+---
+
+```{r setup, include = TRUE}
+#somehow include = TRUE. The default False does not work.
+knitr::opts_chunk$set(echo = T, message = F, warning = F, fig.width=12,
+  fig.height=8) #for knitting the script. echo = F to not show code, warning = FALSE to show no warnings
+```
+
+```{r}
+library(plotly)
+library(tidyverse)
+library(zoo)
+library(boot)
+
+AUC = function(x, y){
+  # Note that x must be in increasing order!
+  output = c()
+  for (id in 1:length(x)){
+    output = c(output, sum(diff(x[1:id])*zoo::rollmean(y[1:id],2)))
+  }
+  return(output)
+}
+
+corr.fun <- function(data, idx)
+{
+  df <- data[idx, ]
+ 
+  # Find the spearman correlation between
+  # the 1rd and 2th columns of dataset
+  c(cor(df[, 1], df[, 2], method = 'pearson'))
+}
+
+corr.diff <- function(data, idx)
+{
+  df <- data[idx, ]
+ 
+  # Find the spearman correlation between
+  # the 1rd and 2th columns of dataset
+  corr1 = cor(df[, 1], df[, 2], method = 'pearson')
+  corr2 = cor(df[, 1], df[, 3], method = 'pearson')
+  c(abs(corr1) - abs(corr2))
+}
+
+boot_it = 6000
+set.seed(3.14)
+fontsize<-28
+cbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+color1 <- "#2B959A"
+color2 <-"#D6692A"
+``` 
+
+```{r}
+data = list.files(path = "StroopFlanker CongIncong Flipped/",
+         pattern="*.csv", 
+         full.names = T) %>% 
+   map_df(function(x) read_csv(x, col_types = cols(.default = "c")) %>% mutate_all(as.numeric)%>%mutate(filename=gsub(".csv","",basename(x)))) %>%
+  group_by(filename)%>%
+    mutate(study = parse_number(filename),
+           agent = str_extract(filename, "\\d+\\_?[^\\d]*$"),
+            Stroop_congruent_K = AUC(Stroop_congruent_correct,reward),
+           Stroop_incongruent_K = AUC(Stroop_incongruent_correct,reward), 
+           Flanker_congruent_K = AUC(Flanker_congruent_correct,reward),
+           Flanker_incongruent_K = AUC(Flanker_incongruent_correct,reward),
+           Stroop_K_effect = Stroop_incongruent_K-Stroop_congruent_K,
+            Flanker_K_effect = Flanker_incongruent_K-Flanker_congruent_K,
+           Stroop_K = AUC((Stroop_congruent_correct+Stroop_incongruent_correct)/2,reward),
+           Flanker_K = AUC((Flanker_congruent_correct+Flanker_incongruent_correct)/2,reward))%>%ungroup()
+
+```
+
+## Correlations with trait parameters
+```{r}
+data_m = data %>%
+  group_by(control_cost, control_efficacy, agent, study)%>%
+  mutate(Stroop_congruency_effect_0 = if_else(reward==0, Stroop_congruency_effect, NaN),
+         Stroop_K_effect_10 = if_else(reward==10, Stroop_K_effect, NaN),
+         Stroop_K_10 = if_else(reward==10, Stroop_K, NaN),
+         Flanker_congruency_effect_0 = if_else(reward==0, Flanker_congruency_effect, NaN))%>%
+  summarise(Stroop_congruency_effect_0 = mean(Stroop_congruency_effect_0, na.rm=T),
+            Stroop_congruency_effect = mean(Stroop_congruency_effect, na.rm=T),
+            Stroop_K_10 = mean(Stroop_K_10, na.rm=T),
+            Flanker_congruency_effect_0 = mean(Flanker_congruency_effect_0, na.rm=T))%>%ungroup()
+
+data_plot = data_m%>%
+    #select(-c('Stroop_task_automaticity', 'Flanker_task_automaticity'))%>%
+  pivot_longer(c(control_cost, control_efficacy, Flanker_congruency_effect_0), names_to="Trait_parameters", values_to = "parameter_values")%>%
+  pivot_longer(c(Stroop_congruency_effect_0, Stroop_congruency_effect, Stroop_K_10), names_to="Measures", values_to = "measure_value")%>%
+  group_by(Trait_parameters, Measures)%>%
+  summarise(measure_cor = cor(parameter_values, measure_value),
+            p_value = round(cor.test(parameter_values, measure_value)$p.value, 5),
+            cor_se = sd(boot(data.frame(parameter_values,measure_value), corr.fun, R = boot_it)$t))%>%ungroup()%>%
+  mutate(Measures = factor(Measures, levels= c("Stroop_congruency_effect_0", "Stroop_congruency_effect","Stroop_K_10"), labels=c(paste0("\U0394","A(0)"), paste0("\U0394","A|"),"K(10)")),
+         Trait_parameters = factor(Trait_parameters, levels= c("control_cost", "control_efficacy", "Flanker_congruency_effect_0"), labels=c("control cost", "control efficacy", paste0("Task B ", "\U0394","A(0)"))))
+
+knitr::kable(data_plot)
+```
+
+correlation summary
+```{r}
+#control cost
+cor.test(data_m$control_cost, data_m$Stroop_congruency_effect_0)
+cor.test(data_m$control_cost, data_m$Stroop_congruency_effect)
+cor.test(data_m$control_cost, data_m$Stroop_K_10)
+```
+
+```{r}
+#control efficacy
+cor.test(data_m$control_efficacy, data_m$Stroop_congruency_effect_0)
+cor.test(data_m$control_efficacy, data_m$Stroop_congruency_effect)
+cor.test(data_m$control_efficacy, data_m$Stroop_K_10)
+```
+
+Significance of difference
+```{r}
+#control cost
+cong_cong0 = boot(data_m%>%select(control_cost, Stroop_congruency_effect, Stroop_congruency_effect_0), corr.diff, R = boot_it)
+paste0("p-value that mean congruency effect correlates better than congruency effect at R=0 is ", as.character(mean(cong_cong0$t < 0)))
+
+K_cong0 = boot(data_m%>%select(control_cost, Stroop_K_10, Stroop_congruency_effect_0), corr.diff, R = boot_it)
+paste0("p-value that K(10) correlates better than congruency effect at R=0 is ", as.character(mean(K_cong0$t < 0)))
+
+K_cong = boot(data_m%>%select(control_cost, Stroop_K_10, Stroop_congruency_effect), corr.diff, R = boot_it)
+paste0("p-value that K(10) correlates better than mean congruency effect is ", as.character(mean(K_cong$t < 0)))
+
+```
+
+```{r}
+#control efficacy
+cong_cong0 = boot(data_m%>%select(control_efficacy, Stroop_congruency_effect, Stroop_congruency_effect_0), corr.diff, R = boot_it)
+paste0("p-value that mean congruency effect correlates better than congruency effect at R=0 is ", as.character(mean(cong_cong0$t < 0)))
+
+K_cong0 = boot(data_m%>%select(control_efficacy, Stroop_K_10, Stroop_congruency_effect_0), corr.diff, R = boot_it)
+paste0("p-value that K(10) correlates better than congruency effect at R=0 is ", as.character(mean(K_cong0$t < 0)))
+
+K_cong = boot(data_m%>%select(control_efficacy, Stroop_K_10, Stroop_congruency_effect), corr.diff, R = boot_it)
+paste0("p-value that K(10) correlates better than mean congruency effect is ", as.character(mean(K_cong$t < 0)))
+
+```
+
+
+## Correlate with a separate data (named Flanker)
+
+correlation summary
+```{r}
+cor.test(data_m$Flanker_congruency_effect_0, data_m$Stroop_congruency_effect_0)
+cor.test(data_m$Flanker_congruency_effect_0, data_m$Stroop_congruency_effect)
+cor.test(data_m$Flanker_congruency_effect_0, data_m$Stroop_K_10)
+```
+
+```{r}
+#Flanker_congruency_effect_10
+cong_cong0 = boot(data_m%>%select(Flanker_congruency_effect_0, Stroop_congruency_effect, Stroop_congruency_effect_0), corr.diff, R = boot_it)
+paste0("p-value that mean congruency effect 0 to 10 correlates better than congruency effect at R=0 is ", as.character(mean(cong_cong0$t < 0)))
+
+K_cong0 = boot(data_m%>%select(Flanker_congruency_effect_0, Stroop_K_10, Stroop_congruency_effect_0), corr.diff, R = boot_it)
+paste0("p-value that K(10) correlates better than congruency effect at R=0 is ", as.character(mean(K_cong0$t < 0)))
+
+K_cong = boot(data_m%>%select(Flanker_congruency_effect_0, Stroop_K_10, Stroop_congruency_effect), corr.diff, R = boot_it)
+paste0("p-value that K(10) correlates better than mean congruency effect 0 to 10 is ", as.character(mean(K_cong$t < 0)))
+```
+
+## Plot
+
+```{r}
+(p<-ggplot(data = data_plot, aes(x=Measures, y=abs(measure_cor), color=Trait_parameters, fill=Trait_parameters)) +
+   geom_linerange(aes(x=Measures, ymin = 0, ymax = abs(measure_cor)),position = position_dodge(width = .5)) +
+  geom_point(size=5, alpha=0.7, shape=21, stroke=2,position = position_dodge(width = .5))+
+    geom_errorbar(aes(ymin = abs(measure_cor)-cor_se, ymax = abs(measure_cor)+cor_se),width = 0.2)+
+  facet_wrap(~Trait_parameters)+
+  #theme minimal
+  theme_minimal()+
+  #sans
+  theme(text = element_text(size=fontsize, family="sans"))+
+  #colors and fill
+  # scale_fill_manual("Social Context", values = c(color1, color2))+
+  # scale_color_manual("Social Context", values = c(color1, color2))+
+  #labs
+  xlab(NULL)+ylab(NULL)+
+  #no legend
+  theme(legend.position="none", strip.background=element_blank(), legend.key=element_rect(color=NA))+
+  #labe x-axis
+  coord_cartesian(ylim = c(0,1))+
+  #scale_x_continuous(breaks = c(1,2),labels = c("Not Social","Social"))+
+    ggtitle("Absolute value of Pearson correlation")+
+  #various theme changes including reducing white space and adding axes
+  theme(axis.line.x = element_line(color="grey20", size = 1),
+        axis.line.y = element_line(color="grey20", size = 1), 
+        panel.spacing.x=unit(0.2, "lines"),
+        panel.spacing.y=unit(1, "lines"),
+        plot.title = element_text(family = "sans", margin=margin(0,0,0,0)),
+        plot.margin = unit(c(0.1, 0.1, 0.1, 0.1), "cm"))+ylim(c(0,2)))
+
+ggsave("Correlations.png", device = "png", dpi=300, width = 10, height = 6)
+```
+
+
+
+
+
+
+
+
